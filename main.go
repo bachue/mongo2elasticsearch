@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	flags "github.com/jessevdk/go-flags"
@@ -12,7 +13,8 @@ import (
 var CommandArgs struct {
 	MongoDBURL *string `long:"url" description:"MongoDB URL" required:"true"`
 	Only       *string `long:"only" description:"Which database and collection to monitor"`
-	Since      *int64  `long:"since" description:"The MongoDB Timestamp to start to monitor"`
+	Since      *int32  `long:"since" description:"The MongoDB Timestamp to start to monitor"`
+	Ordinal    *int32  `long:"ordinal" description:"The ordinal operation on the specified MongoDB Timestamp to start to monitor"`
 	FastStop   bool    `long:"fast-stop" description:"Exit for MongoDB Tail Timeout"`
 }
 
@@ -26,14 +28,19 @@ func main() {
 		return
 	}
 
-	oplog, err = getMongoDBCollection()
-	if err != nil {
-		panic(err)
-	}
+	for {
+		oplog, err = getMongoDBCollection()
+		if err != nil {
+			panic(err)
+		}
 
-	err = run(oplog)
-	if err != nil {
-		panic(err)
+		err = run(oplog)
+		if err != nil {
+			if err == io.EOF { // Maybe the primary/slave switch
+				continue
+			}
+			panic(err)
+		}
 	}
 }
 
@@ -42,10 +49,19 @@ func run(oplog *mgo.Collection) error {
 		query  bson.M
 		result bson.M
 		iter   *mgo.Iter
+		sec    int32
+		ord    int32
 		err    error
 	)
 	if CommandArgs.Since != nil {
-		query = bson.M{"ts": bson.M{"$gt": bson.MongoTimestamp(*CommandArgs.Since)}}
+		sec = *CommandArgs.Since
+		if CommandArgs.Ordinal != nil {
+			ord = *CommandArgs.Ordinal
+		} else {
+			ord = 0
+		}
+		var mongoTimeStamp bson.MongoTimestamp = bson.MongoTimestamp(sec)<<32 + bson.MongoTimestamp(ord)
+		query = bson.M{"ts": bson.M{"$gt": mongoTimeStamp}}
 	}
 	if CommandArgs.Only != nil {
 		query["ns"] = *CommandArgs.Only
