@@ -11,11 +11,11 @@ import (
 )
 
 var CommandArgs struct {
-	MongoDBURL *string `long:"url" description:"MongoDB URL" required:"true"`
-	Only       *string `long:"only" description:"Which database and collection to monitor"`
-	Since      *int32  `long:"since" description:"The MongoDB Timestamp to start to monitor"`
-	Ordinal    *int32  `long:"ordinal" description:"The ordinal operation on the specified MongoDB Timestamp to start to monitor"`
-	FastStop   bool    `long:"fast-stop" description:"Exit for MongoDB Tail Timeout"`
+	MongoDBURL string   `long:"url" description:"MongoDB URL" required:"true"`
+	Namespaces []string `long:"ns" description:"Which database and collection to monitor"`
+	Since      int32    `long:"since" description:"The MongoDB Timestamp to start to monitor"`
+	Ordinal    int32    `long:"ordinal" description:"The ordinal operation on the specified MongoDB Timestamp to start to monitor"`
+	FastStop   bool     `long:"fast-stop" description:"Exit for MongoDB Tail Timeout"`
 }
 
 func main() {
@@ -49,22 +49,17 @@ func run(oplog *mgo.Collection) error {
 		query  bson.M
 		result bson.M
 		iter   *mgo.Iter
-		sec    int32
-		ord    int32
+		sec    bson.MongoTimestamp
+		ord    bson.MongoTimestamp
 		err    error
 	)
-	if CommandArgs.Since != nil {
-		sec = *CommandArgs.Since
-		if CommandArgs.Ordinal != nil {
-			ord = *CommandArgs.Ordinal
-		} else {
-			ord = 0
-		}
-		var mongoTimeStamp bson.MongoTimestamp = bson.MongoTimestamp(sec)<<32 + bson.MongoTimestamp(ord)
-		query = bson.M{"ts": bson.M{"$gt": mongoTimeStamp}}
+	if CommandArgs.Since > 0 {
+		sec = bson.MongoTimestamp(CommandArgs.Since)
+		ord = bson.MongoTimestamp(CommandArgs.Ordinal)
+		query = bson.M{"ts": bson.M{"$gt": sec<<32 + ord}}
 	}
-	if CommandArgs.Only != nil {
-		query["ns"] = *CommandArgs.Only
+	if len(CommandArgs.Namespaces) > 0 {
+		query["ns"] = bson.M{"$in": CommandArgs.Namespaces}
 	}
 	iter = oplog.Find(query).Tail(1 * time.Second)
 	for {
@@ -94,11 +89,11 @@ func run(oplog *mgo.Collection) error {
 }
 
 func getMongoDBCollection() (*mgo.Collection, error) {
-	session, err := mgo.Dial(*CommandArgs.MongoDBURL)
+	session, err := mgo.Dial(CommandArgs.MongoDBURL)
 	if err != nil {
 		return nil, err
 	}
-	session.SetMode(mgo.Strong, true)
+	session.SetMode(mgo.SecondaryPreferred, true)
 	database := session.DB("local")
 	collection := database.C("oplog.rs")
 	return collection, nil
